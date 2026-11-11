@@ -53,7 +53,7 @@ button.small{width:auto;padding:6px 10px;font-size:13px}
 </style>
 </head>
 <body>
-<header><b id="title">HS DAQ</b><small id="ver">v2026-11-11d</small></header>
+<header><b id="title">HS DAQ</b><small id="ver">v2026-11-11e</small></header>
 <div id="warn" hidden></div>
 <div id="space" hidden></div>
 <div id="cam" hidden><video id="pv" playsinline muted></video><span>REC</span></div>
@@ -74,9 +74,20 @@ var S = load(), ui = { view: 'home' }, lastDown = 0, lastTap = {}, rec = null, s
 
 /* ---------- storage ---------- */
 function load() { try { var s = JSON.parse(localStorage.getItem(KEY)); if (s && s.v === 1) return s; } catch (e) {} return C.blank(); }
+/* The records are saved twice on every change: in IndexedDB (large, the copy that counts on a long trip) and in
+   localStorage (instant, but capped at about 5 MB by the browser). When the small one is full the app carries on
+   with the large one. A counter (rev) says which copy is newer when the app opens. */
+var lsFull = false, recBytes = 0;
 function save() {
-  try { localStorage.setItem(KEY, JSON.stringify(S)); warn(''); return true; }
-  catch (e) { warn('SAVE FAILED: phone storage is full or blocked. Export your data now.'); return false; }
+  S.rev = (S.rev || 0) + 1;
+  var json = JSON.stringify(S), small = true; recBytes = json.length;
+  try { localStorage.setItem(KEY, json); lsFull = false; }
+  catch (e) { small = false; lsFull = true; try { localStorage.removeItem(KEY); } catch (e2) {} }
+  putBlob('state', json).then(function () { if ($('warn').textContent.indexOf('SAVE FAILED') === 0) warn(''); }).catch(function () {
+    if (small) return;   /* the small copy took it; nothing lost */
+    warn('SAVE FAILED: phone storage is full or blocked. Export your data now, then Export > Free space.');
+  });
+  return true;
 }
 /* Storage level: warn before the phone refuses to save. Not every browser reports it; then no warning is possible. */
 function checkStorage() {
@@ -268,10 +279,13 @@ function vExport() {
   h += '<div class="card" style="margin-top:8px"><h2>Data</h2><p class="mut">' + S.sessions.length + ' sessions, ' + S.passes.length + ' passes, ' + S.joints.length + ' joints. One zip holding five CSV files and a full backup (no photos or videos inside). Every share is a complete snapshot of this phone.</p>' +
     '<button class="pri" data-act="shareData">Share data (one zip)</button></div>';
   h += '<div class="card"><h2>Photos</h2><p class="mut">' + photos.length + ' photos, ' + pu + ' not yet exported. Shared as one zip, 30 at a time.</p><button data-act="sharePhotos"' + (pu ? '' : ' disabled') + '>Share next ' + Math.min(30, pu) + ' photos</button></div>';
-  h += '<div class="card"><h2>Videos</h2><div class="list">' + (vids.length ? vids.map(function (m) {
+  var vq = nextVideos();
+  h += '<div class="card"><h2>Videos</h2><p class="mut">' + vids.length + ' videos, ' + vids.filter(function (m) { return !m.exported; }).length + ' not yet exported.</p>' +
+    '<button data-act="shareVideos"' + (vq.length ? '' : ' disabled') + '>Share next ' + vq.length + ' videos together (' + mb(vq.reduce(function (a, m) { return a + (m.size || 0); }, 0)) + ')</button><div class="list">' + (vids.length ? vids.map(function (m) {
     return '<div><div class="g"><b>' + esc(C.mediaName(S, m)) + '</b><small>' + mb(m.size || 0) + (m.exported ? ' · exported' : ' · NOT exported') + '</small></div><button class="small" data-act="shareVideo" data-arg="' + m.id + '">Share</button></div>';
   }).join('') : '<div class="mut">No videos.</div>') + '</div></div>';
-  h += '<div class="card"><h2>Backup and space</h2><p class="mut" id="store"></p><button data-act="restore">Restore from a backup file</button>' +
+  h += '<div class="card"><h2>Backup and space</h2><p class="mut">Records (everything that goes into the CSV files): ' + (recBytes / 1024).toFixed(0) + ' KB.' +
+    (lsFull ? ' The small quick-save area is full, so records are kept in the large one only. Nothing is lost.' : '') + '</p><p class="mut" id="store"></p><button data-act="restore">Restore from a backup file</button>' +
     '<button class="danger" style="margin-top:8px" data-act="purge"' + (exp.length ? '' : ' disabled') + '>Free space: remove ' + exp.length + ' exported photos / videos from this phone</button></div>';
   return h;
 }
@@ -402,6 +416,16 @@ function mediaFiles(list) {
     return mediaBlob(m).then(function (b) { return b ? new File([b], C.mediaName(S, m), { type: m.kind === 'photo' ? 'image/jpeg' : (m.mime || 'video/mp4').split(';')[0] }) : null; });
   }));
 }
+/* Next unexported videos to share in one go: up to 5 files and about 300 MB, so the phone does not run out of memory. */
+function nextVideos() {
+  var out = [], sum = 0;
+  S.media.forEach(function (m) {
+    if (m.kind !== 'video' || m.exported || m.gone || m === recMedia) return;
+    if (out.length && (out.length >= 5 || sum + (m.size || 0) > 300 * 1048576)) return;
+    out.push(m); sum += m.size || 0;
+  });
+  return out;
+}
 function shareMedia(list) {
   mediaFiles(list).then(function (files) {
     var ok = list.filter(function (m, i) { return files[i]; }), missing = list.length - ok.length;
@@ -515,6 +539,7 @@ var ACT = {
       shareFiles([new File(C.zip(files), C.bundleName(S, stamp(), 'photos'), { type: 'application/zip' })], function () { ok.forEach(function (m) { m.exported = true; }); });
     }).catch(function (e) { toast('Could not load photos: ' + (e && e.message || e)); });
   },
+  shareVideos: function () { var l = nextVideos(); if (l.length) { toast('Preparing ' + l.length + ' videos…'); shareMedia(l); } },
   shareVideo: function (id) { var m = C.by(S.media, id); if (m === recMedia) { toast('Stop the recording first'); return; } if (m) { toast('Preparing video…'); shareMedia([m]); } },
   pendingShare: function () {
     var p = ui.pending; if (!p) return; ui.pending = null;
@@ -566,10 +591,26 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || /^(localh
 }
 if (window.self !== window.top) warn('This page is inside a frame: storage here may be temporary. Open it directly in Safari.');
 /* Videos that were recording when the page died keep their saved pieces; give them an end time. */
-S.media.forEach(function (m) { if (m.kind === 'video' && m.t0 && !m.t1) m.t1 = m.t0; });
-if (!S.device) S.device = C.uid();
-if (S.active && S.active.passId && C.by(S.passes, S.active.passId)) { ui.view = 'live'; ui.pid = S.active.passId; }
-render();
+/* Open with whichever saved copy is newer, then show the app. Never wait more than 1.5 s for the large storage
+   area: if it is slow, open with the quick copy and switch only if nothing has been changed in the meantime. */
+var booted = false, bootRev = null;
+function boot() {
+  if (booted) return; booted = true;
+  try {
+    if (!S.device) S.device = C.uid();
+    S.media.forEach(function (m) { if (m.kind === 'video' && m.t0 && !m.t1) m.t1 = m.t0; });
+    recBytes = JSON.stringify(S).length; bootRev = S.rev || 0;
+    if (S.active && S.active.passId && C.by(S.passes, S.active.passId)) { ui.view = 'live'; ui.pid = S.active.passId; }
+    render();
+  } catch (e) { warn('APP ERROR at start: ' + (e && e.message || e)); }
+}
+getBlob('state').then(function (json) {
+  var b = json ? JSON.parse(json) : null;
+  if (!b || b.v !== 1 || (b.rev || 0) <= (S.rev || 0)) return;
+  if (!booted) S = b;
+  else if ((S.rev || 0) === bootRev) { S = b; booted = false; boot(); }
+}).catch(function () {}).then(boot);
+setTimeout(boot, 1500);
 })();
 </script>
 </body>
