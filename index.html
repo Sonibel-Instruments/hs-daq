@@ -40,6 +40,7 @@ button.small{width:auto;padding:6px 10px;font-size:13px}
 .steps{display:flex;gap:4px;margin:8px 0}.steps span{flex:1;text-align:center;font-size:11px;padding:4px 2px;border-radius:6px;background:var(--bg);color:var(--mut)}
 .steps span.done{background:var(--go);color:#fff}
 #warn{background:var(--stop);color:#fff;padding:10px 12px;font-weight:600}
+#space{background:var(--warn);color:#fff;padding:10px 12px;font-weight:600}
 #toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#000c;color:#fff;padding:10px 16px;border-radius:20px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90%;z-index:20}
 #toast.on{opacity:1}
 #cam{position:sticky;top:48px;z-index:4;background:#000;text-align:center}
@@ -52,8 +53,9 @@ button.small{width:auto;padding:6px 10px;font-size:13px}
 </style>
 </head>
 <body>
-<header><b id="title">HS DAQ</b><small id="ver">v2026-11-11b</small></header>
+<header><b id="title">HS DAQ</b><small id="ver">v2026-11-11c</small></header>
 <div id="warn" hidden></div>
+<div id="space" hidden></div>
 <div id="cam" hidden><video id="pv" playsinline muted></video><span>REC</span></div>
 <main id="app"></main>
 <div id="toast"></div>
@@ -75,6 +77,16 @@ function load() { try { var s = JSON.parse(localStorage.getItem(KEY)); if (s && 
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(S)); warn(''); return true; }
   catch (e) { warn('SAVE FAILED: phone storage is full or blocked. Export your data now.'); return false; }
+}
+/* Storage level: warn before the phone refuses to save. Not every browser reports it; then no warning is possible. */
+function checkStorage() {
+  if (!(navigator.storage && navigator.storage.estimate)) return;
+  navigator.storage.estimate().then(function (e) {
+    var q = e.quota || 0, u = e.usage || 0, free = q - u, low = q > 0 && (u / q > 0.8 || free < 300 * 1048576), el = $('space');
+    ui.free = q ? free : null; el.hidden = !low;
+    if (low) el.textContent = 'Storage for this app is nearly full (' + mb(free) + ' left). Export photos and videos, then use Export > Free space.';
+    var st = $('store'); if (st) st.textContent = 'Storage used by this app: ' + mb(u) + ' of about ' + mb(q) + ' allowed (' + mb(free) + ' free, roughly ' + Math.floor(free / (19 * 1048576)) + ' min of video).';
+  }).catch(function () {});
 }
 function warn(t) { $('warn').textContent = t; $('warn').hidden = !t; }
 function toast(t) { var e = $('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(toast.h); toast.h = setTimeout(function () { e.classList.remove('on'); }, 2600); }
@@ -269,10 +281,7 @@ function render() {
   Array.prototype.forEach.call(document.querySelectorAll('img[data-thumb]'), function (img) {
     getBlob('t:' + img.getAttribute('data-thumb')).then(function (u) { if (u) img.src = u; });
   });
-  var st = $('store');
-  if (st && navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then(function (e) {
-    st.textContent = 'Phone storage used by this app: ' + mb(e.usage || 0) + ' of about ' + mb(e.quota || 0) + ' allowed.';
-  });
+  checkStorage();
   if (ui.view === 'live') { wakeOn(); tick(); } else wakeOff();
 }
 function go(view, id) {
@@ -294,6 +303,7 @@ function tick() {
   $('tm2').textContent = sub;
 }
 setInterval(tick, 100);
+setInterval(checkStorage, 20000);
 function logEvent(type, extra) {
   var p = curPass(); if (!p) return null;
   /* one guard for all four stopwatch taps: a double tap on the big button must not skip a step */
@@ -319,7 +329,7 @@ function storePhoto(src, w, h, target, t) {
     m.size = b.size; return putBlob('m:' + m.id, b);
   }).then(function () { return scaleImage(src, w, h, 200, 0.7, true); }).then(function (u) { return putBlob('t:' + m.id, u); })
     .then(function () { S.media.push(m); save(); render(); toast('Photo saved'); })
-    .catch(function (e) { warn('PHOTO NOT SAVED: ' + (e && e.message || e)); });
+    .catch(function (e) { warn('PHOTO NOT SAVED (storage full?): export, then Export > Free space. ' + (e && e.message || e)); });
 }
 function takePhoto(arg) {
   var target = arg.split(':'), t = tapTime(), pv = $('pv');
@@ -334,6 +344,7 @@ $('photoIn').addEventListener('change', function () {
 });
 function startVideo() {
   var p = curPass(); if (!p || rec) return;
+  if (ui.free != null && ui.free < 150 * 1048576 && !confirm('Only ' + mb(ui.free) + ' of storage left, about ' + Math.floor(ui.free / (19 * 1048576)) + ' min of video. Record anyway?')) return;
   if (!navigator.mediaDevices || !window.MediaRecorder) { toast('In-app video is not available here. Use "Attach a video".'); return; }
   navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }).then(function (st) {
@@ -344,7 +355,9 @@ function startVideo() {
     rec.ondataavailable = function (e) {
       if (!e.data || !e.data.size) return;
       m.size += e.data.size; if (rec && rec.state === 'recording') m.t1 = Date.now();
-      putBlob('v:' + m.id + ':' + C.pad(seq++, 6), e.data).then(save).catch(function (err) { warn('VIDEO NOT SAVING: ' + (err && err.message || err)); });
+      putBlob('v:' + m.id + ':' + C.pad(seq++, 6), e.data).then(save).catch(function (err) {
+        warn('VIDEO NOT SAVING (storage full?): stop, export, then Export > Free space. ' + (err && err.message || err)); if (rec && rec.state === 'recording') stopVideo();
+      });
     };
     rec.onerror = function () { toast('Video recording stopped by the phone'); endVideo(); };
     rec.onstop = endVideo;
@@ -423,9 +436,12 @@ var ACT = {
   splitId: function () {
     var p = curPass(); if (!p) return;
     var ids = C.weldIdList(p.weldIds), next = (ids.length ? Math.max.apply(null, ids) : 0) + 1;
-    if (!confirm('The unit moved to WELD ID ' + next + ' during this pass? It will be added to this pass so the recordings are joined.')) return;
-    var e = logEvent('MARK', { tag: 'unit weld ID changed', note: 'now ' + next });
-    p.weldIds = ids.concat([next]).join(','); save(); render(); if (!e) toast('Weld ID ' + next + ' added');
+    var live = C.passTimes(S, p.id).welding;
+    if (!confirm('The unit moved to WELD ID ' + next + ' during this pass? It will be added to this pass so the recordings are joined.' +
+      (live ? '' : ' The arc is not on, so this is logged as noticed afterwards, with no time.'))) return;
+    /* while welding the tap time is when it happened; afterwards the time means nothing, so it is recorded as such */
+    S.events.push({ id: C.uid(), passId: p.id, t: tapTime(), type: 'MARK', tag: live ? 'unit weld ID changed' : 'unit weld ID changed (noticed afterwards, time unknown)', note: 'now ' + next });
+    p.weldIds = ids.concat([next]).join(','); save(); render(); toast('Weld ID ' + next + ' added to this pass');
   },
   newJoint: function () {
     var last = S.joints[S.joints.length - 1], m = last && /^(.*?)(\d+)$/.exec(last.name || '');
