@@ -91,6 +91,19 @@
     return state.media.filter(function (m) { return m[key] === id && (!kind || m.kind === kind); });
   }
 
+  /* The video that shows a pass: the in-app recording (its start time is known) that overlaps the arc the most.
+     A tap at phone time t is at (t - video.t0) seconds into that video: negative means it happened before the
+     video started, more than the video's length means after it ended. */
+  function passVideo(state, passId) {
+    var t = passTimes(state, passId), a = t.arcStart, b = t.arcStop != null ? t.arcStop : Infinity, best = null, bo = -Infinity;
+    mediaOf(state, 'passId', passId, 'video').forEach(function (m) {
+      if (m.t0 == null) return;
+      var o = a == null ? 0 : Math.min(b, m.t1 || m.t0) - Math.max(a, m.t0);
+      if (o > bo) { bo = o; best = m; }
+    });
+    return best;
+  }
+
   /* ---------- CSV ---------- */
   function cell(v) {
     v = v == null ? '' : String(v);
@@ -111,10 +124,11 @@
   var PASS_COLS = ['visit', 'operator', 'phone', 'unit', 'session', 'session_folder', 'weld_ids', 'joint', 'pass_in_joint', 'side',
     'direction', 'kind', 'mic', 'volts', 'amps', 'travel_ipm', 'stickout_in', 'wire', 'intent', 'conditions', 'verdict',
     'arc_start_utc', 'plate_in_utc', 'plate_out_utc', 'arc_stop_utc', 'plate_in_s', 'plate_out_s', 'arc_dur_s', 'arc_starts',
-    'unit_clock_at_arc_start', 'unit_clock_offset_s', 'marks', 'photos', 'videos', 'note', 'pass_id'];
+    'unit_clock_at_arc_start', 'unit_clock_offset_s', 'marks', 'photos', 'videos', 'video_file', 'video_dur_s', 'video_arc_start_s',
+    'video_plate_in_s', 'video_plate_out_s', 'video_arc_stop_s', 'note', 'pass_id'];
   function passRows(state) {
     return state.passes.map(function (p) {
-      var s = by(state.sessions, p.sessionId) || {}, j = by(state.joints, p.jointId) || {}, t = passTimes(state, p.id);
+      var s = by(state.sessions, p.sessionId) || {}, j = by(state.joints, p.jointId) || {}, t = passTimes(state, p.id), v = passVideo(state, p.id), v0 = v ? v.t0 : null;
       var marks = passEvents(state, p.id).filter(function (e) { return e.type === 'MARK'; }).map(function (e) {
         return (t.arcStart != null ? secs(t.arcStart, e.t) + 's ' : '') + (e.tag || 'mark') + (e.note ? ' (' + e.note + ')' : '');
       });
@@ -128,19 +142,21 @@
         unit_clock_offset_s: s.offsetMs == null || s.offsetMs === '' ? '' : (s.offsetMs / 1000).toFixed(3), marks: marks.join('; '),
         photos: mediaOf(state, 'passId', p.id, 'photo').map(function (m) { return mediaName(state, m); }).join('; '),
         videos: mediaOf(state, 'passId', p.id, 'video').map(function (m) { return mediaName(state, m); }).join('; '),
+        video_file: v ? mediaName(state, v) : '', video_dur_s: v ? secs(v.t0, v.t1) : '', video_arc_start_s: secs(v0, t.arcStart),
+        video_plate_in_s: secs(v0, t.plateIn), video_plate_out_s: secs(v0, t.plateOut), video_arc_stop_s: secs(v0, t.arcStop),
         note: p.note, pass_id: p.id };
     });
   }
   var EVENT_COLS = ['session', 'weld_ids', 'joint', 'pass_in_joint', 'event_no', 'event', 'tag', 'phone_time_utc', 's_after_arc_start',
-    'unit_clock', 'note', 'pass_id'];
+    'unit_clock', 'video_file', 'video_s', 'note', 'pass_id'];
   function eventRows(state) {
     var rows = [];
     state.passes.forEach(function (p) {
-      var s = by(state.sessions, p.sessionId) || {}, j = by(state.joints, p.jointId) || {}, t = passTimes(state, p.id);
+      var s = by(state.sessions, p.sessionId) || {}, j = by(state.joints, p.jointId) || {}, t = passTimes(state, p.id), v = passVideo(state, p.id);
       passEvents(state, p.id).forEach(function (e, i) {
         rows.push({ session: s.num, weld_ids: weldIdList(p.weldIds).join(';'), joint: j.name, pass_in_joint: p.passNo, event_no: i + 1,
           event: e.type, tag: e.tag, phone_time_utc: utc(e.t), s_after_arc_start: secs(t.arcStart, e.t), unit_clock: recTime(s, e.t),
-          note: e.note, pass_id: p.id });
+          video_file: v ? mediaName(state, v) : '', video_s: v ? secs(v.t0, e.t) : '', note: e.note, pass_id: p.id });
       });
     });
     return rows;
@@ -230,5 +246,5 @@
     passTimes: passTimes, nextStep: nextStep, weldIdList: weldIdList, nextPassDefaults: nextPassDefaults, sessionLabel: sessionLabel,
     mediaName: mediaName, mediaOf: mediaOf, csv: csv, recTime: recTime, passRows: passRows, eventRows: eventRows, jointRows: jointRows,
     inspRows: inspRows, mediaRows: mediaRows, exportFiles: exportFiles, mergeState: mergeState, blank: blank, PASS_COLS: PASS_COLS,
-    nextPassNo: nextPassNo, bundleName: bundleName, zip: zip, crc32: crc32 };
+    nextPassNo: nextPassNo, passVideo: passVideo, bundleName: bundleName, zip: zip, crc32: crc32 };
 })(typeof window !== 'undefined' ? window : globalThis);

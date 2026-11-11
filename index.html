@@ -53,7 +53,7 @@ button.small{width:auto;padding:6px 10px;font-size:13px}
 </style>
 </head>
 <body>
-<header><b id="title">HS DAQ</b><small id="ver">v2026-11-11c</small></header>
+<header><b id="title">HS DAQ</b><small id="ver">v2026-11-11d</small></header>
 <div id="warn" hidden></div>
 <div id="space" hidden></div>
 <div id="cam" hidden><video id="pv" playsinline muted></video><span>REC</span></div>
@@ -160,7 +160,7 @@ function vHome() {
   }).join('') : '<div class="mut">No joints yet.</div>') + '</div><button data-act="newJoint">+ New joint</button></div>';
   var un = S.media.filter(function (m) { return !m.exported && !m.gone; }).length;
   h += '<div class="card"><h2>Export and backup</h2><button class="pri" data-act="go" data-arg="export">Export' + (un ? ' (' + un + ' media not yet exported)' : '') +
-    '</button><p class="mut" id="store"></p></div>';
+    '</button><p class="mut" id="store"></p><p class="mut" id="off"></p></div>';
   return h;
 }
 function vSession() {
@@ -282,6 +282,10 @@ function render() {
     getBlob('t:' + img.getAttribute('data-thumb')).then(function (u) { if (u) img.src = u; });
   });
   checkStorage();
+  var off = $('off');
+  if (off) off.textContent = !('serviceWorker' in navigator) ? 'Offline use: not available in this browser.' :
+    navigator.serviceWorker.controller ? 'Offline use: ready. The app is saved on this phone and opens without signal.' :
+    'Offline use: NOT ready yet. With signal, close the app and open it again.';
   if (ui.view === 'live') { wakeOn(); tick(); } else wakeOff();
 }
 function go(view, id) {
@@ -556,7 +560,10 @@ document.addEventListener('click', function (e) {
 document.addEventListener('visibilitychange', function () { if (!document.hidden && ui.view === 'live') wakeOn(); });
 window.addEventListener('pagehide', function () { save(); });
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(function () {});
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || /^(localhost|127\.0\.0\.1)$/.test(location.hostname))) {
+  navigator.serviceWorker.register('sw.js').catch(function () {});
+  navigator.serviceWorker.addEventListener('controllerchange', function () { if (ui.view === 'home') render(); });
+}
 if (window.self !== window.top) warn('This page is inside a frame: storage here may be temporary. Open it directly in Safari.');
 /* Videos that were recording when the page died keep their saved pieces; give them an end time. */
 S.media.forEach(function (m) { if (m.kind === 'video' && m.t0 && !m.t1) m.t1 = m.t0; });
