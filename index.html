@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="HS DAQ">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<title>HS DAQ</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--fg:#14171a;--mut:#667;--line:#d5d9df;--acc:#0b63ce;--go:#12813a;--stop:#c0271d;--warn:#b25c00}
+@media (prefers-color-scheme:dark){:root{--bg:#101214;--card:#1b1e22;--fg:#eef0f2;--mut:#9aa3ad;--line:#343a41;--acc:#5aa2ff;--go:#2fae5c;--stop:#ef5a4f;--warn:#f0a23c}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.35 -apple-system,system-ui,sans-serif;padding:0 0 env(safe-area-inset-bottom)}
+header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:calc(8px + env(safe-area-inset-top)) 12px 8px;display:flex;align-items:center;gap:8px}
+header b{flex:1;font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+header small{color:var(--mut);font-size:11px}
+main{padding:10px 10px 40px;max-width:640px;margin:auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin:0 0 10px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:0 0 8px}
+label{display:block;font-size:12px;color:var(--mut);margin:0 0 8px}
+input,select,textarea{display:block;width:100%;margin-top:3px;padding:10px;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px}
+textarea{min-height:64px}
+.row{display:flex;gap:8px}.row>*{flex:1;min-width:0}
+button{font:inherit;font-weight:600;padding:12px 10px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);width:100%}
+button.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+button.danger{color:var(--stop)}
+button.small{width:auto;padding:6px 10px;font-size:13px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:3px 0 10px}
+.chip{width:auto;padding:8px 12px;font-size:14px;font-weight:500;border-radius:20px}
+.chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.lbl{font-size:12px;color:var(--mut)}
+.list>div{display:flex;align-items:center;gap:8px;padding:10px 0;border-top:1px solid var(--line)}
+.list>div:first-child{border-top:0}.list .g{flex:1;min-width:0}.list small{color:var(--mut);display:block}
+#tm{font:700 54px/1 ui-monospace,Menlo,monospace;text-align:center;margin:4px 0}
+#tm2{text-align:center;color:var(--mut);font-size:13px;min-height:18px;margin-bottom:8px}
+#big{font-size:26px;padding:26px 10px;color:#fff;border:0}
+#big.s-ARC_START{background:var(--go)}#big.s-PLATE_IN,#big.s-PLATE_OUT{background:var(--acc)}#big.s-ARC_STOP{background:var(--stop)}
+.steps{display:flex;gap:4px;margin:8px 0}.steps span{flex:1;text-align:center;font-size:11px;padding:4px 2px;border-radius:6px;background:var(--bg);color:var(--mut)}
+.steps span.done{background:var(--go);color:#fff}
+#warn{background:var(--stop);color:#fff;padding:10px 12px;font-weight:600}
+#toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#000c;color:#fff;padding:10px 16px;border-radius:20px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90%;z-index:20}
+#toast.on{opacity:1}
+#cam{position:sticky;top:48px;z-index:4;background:#000;text-align:center}
+#cam video{max-height:30vh;max-width:100%}
+#cam span{position:absolute;left:8px;top:8px;background:var(--stop);color:#fff;font-size:12px;font-weight:700;padding:2px 8px;border-radius:10px}
+.thumbs{display:flex;flex-wrap:wrap;gap:6px}.thumbs div{position:relative}.thumbs img{width:72px;height:72px;object-fit:cover;border-radius:8px;background:var(--line)}
+.thumbs button{position:absolute;right:-4px;top:-4px;width:24px;height:24px;padding:0;border-radius:12px;font-size:12px}
+.mut{color:var(--mut);font-size:13px}.req{outline:2px solid var(--stop)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header><b id="title">HS DAQ</b><small id="ver">v2026-11-11a</small></header>
+<div id="warn" hidden></div>
+<div id="cam" hidden><video id="pv" playsinline muted></video><span>REC</span></div>
+<main id="app"></main>
+<div id="toast"></div>
+<input type="file" id="photoIn" accept="image/*" capture="environment" hidden>
+<input type="file" id="videoIn" accept="video/*" capture="environment" hidden>
+<input type="file" id="restoreIn" accept=".json,application/json" hidden>
+<script src="core.js"></script>
+<script>
+(function () {
+'use strict';
+var C = HSCore, KEY = 'hsdaq.v1', $ = function (id) { return document.getElementById(id); };
+var INTENTS = ['good / nominal', 'slag / roll attempt', 'porosity recipe', 'long stickout', 'short stickout', 'single wire', 'overspeed', 'other'];
+var CONDITIONS = ['long stickout', 'short stickout', 'single wire', 'overspeed', 'low flux', 'water / wet flux', 'contaminated', 'parameters changed'];
+var MARKS = ['arc dropped', 'arc-start failure', 'flux out', 'parameter change', 'induced defect here', 'visible defect', 'background noise', 'other'];
+var S = load(), ui = { view: 'home' }, lastDown = 0, lastTap = {}, rec = null, stream = null, recMedia = null, wake = null;
+
+/* ---------- storage ---------- */
+function load() { try { var s = JSON.parse(localStorage.getItem(KEY)); if (s && s.v === 1) return s; } catch (e) {} return C.blank(); }
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(S)); warn(''); return true; }
+  catch (e) { warn('SAVE FAILED: phone storage is full or blocked. Export your data now.'); return false; }
+}
+function warn(t) { $('warn').textContent = t; $('warn').hidden = !t; }
+function toast(t) { var e = $('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(toast.h); toast.h = setTimeout(function () { e.classList.remove('on'); }, 2600); }
+var dbp = new Promise(function (res, rej) {
+  var r = indexedDB.open('hsdaq', 1);
+  r.onupgradeneeded = function () { r.result.createObjectStore('blobs'); };
+  r.onsuccess = function () { res(r.result); }; r.onerror = function () { rej(r.error); };
+});
+function idb(mode, fn) {
+  return dbp.then(function (db) {
+    return new Promise(function (res, rej) {
+      var tx = db.transaction('blobs', mode), q = fn(tx.objectStore('blobs'));
+      tx.oncomplete = function () { res(q && q.result); }; tx.onerror = tx.onabort = function () { rej(tx.error || new Error('storage error')); };
+    });
+  });
+}
+function putBlob(k, b) { return idb('readwrite', function (s) { return s.put(b, k); }); }
+function getBlob(k) { return idb('readonly', function (s) { return s.get(k); }); }
+function range(p) { return IDBKeyRange.bound(p, p + '￿'); }
+function getRange(p) { return idb('readonly', function (s) { return s.getAll(range(p)); }); }
+function delRange(p) { return idb('readwrite', function (s) { return s.delete(range(p)); }); }
+function mediaBlob(m) {
+  if (m.kind === 'photo') return getBlob('m:' + m.id);
+  return getRange('v:' + m.id + ':').then(function (parts) { return parts.length ? new Blob(parts, { type: m.mime || 'video/mp4' }) : null; });
+}
+function dropMediaBlobs(m) { return Promise.all([delRange('m:' + m.id), delRange('t:' + m.id), delRange('v:' + m.id + ':')]); }
+
+/* ---------- helpers ---------- */
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function obj(kind, id) {
+  if (kind === 'v') return S.visit;
+  return C.by({ s: S.sessions, j: S.joints, p: S.passes, e: S.events, i: S.insp }[kind] || [], id);
+}
+function field(label, key, val, attrs) {
+  return '<label>' + label + '<input data-k="' + key + '" value="' + esc(val) + '" ' + (attrs || '') + '></label>';
+}
+function num(label, key, val) { return field(label, key, val, 'inputmode="decimal"'); }
+function chips(key, opts, cur, multi) {
+  return '<div class="chips">' + opts.map(function (o) {
+    var v = Array.isArray(o) ? o[0] : o, l = Array.isArray(o) ? o[1] : o, on = multi ? (cur || []).indexOf(v) >= 0 : cur === v;
+    return '<button class="chip' + (on ? ' on' : '') + '" data-set="' + key + ':' + esc(v) + '"' + (multi ? ' data-multi="1"' : '') + '>' + esc(l) + '</button>';
+  }).join('') + '</div>';
+}
+function tapTime() { var n = Date.now(); return (n - lastDown < 1500) ? lastDown : n; }
+function clock(ms) { var d = new Date(ms); return C.pad(d.getHours(), 2) + ':' + C.pad(d.getMinutes(), 2) + ':' + C.pad(d.getSeconds(), 2); }
+function dur(ms) { if (ms == null) return '–'; var s = ms / 1000; return Math.floor(s / 60) + ':' + C.pad((s % 60).toFixed(1), 4); }
+function mb(n) { return (n / 1048576).toFixed(n > 10485760 ? 0 : 1) + ' MB'; }
+function curPass() { return C.by(S.passes, ui.pid); }
+function jointName(id) { var j = C.by(S.joints, id); return j ? (j.name || '(unnamed joint)') : '(no joint)'; }
+function passLine(p) {
+  var t = C.passTimes(S, p.id), n = C.mediaOf(S, 'passId', p.id);
+  return '<b>W' + esc(C.weldIdList(p.weldIds).join(',') || '?') + ' · ' + esc(jointName(p.jointId)) + ' p' + esc(p.passNo) + '</b><small>' +
+    esc([p.kind !== 'weld' ? p.kind : '', p.side, p.direction, p.intent].filter(Boolean).join(' · ')) + ' · ' +
+    (t.arcStart == null ? 'not started' : t.welding ? 'WELDING' : dur(t.arcStop - t.arcStart)) +
+    (n.length ? ' · ' + n.filter(function (m) { return m.kind === 'photo'; }).length + ' photo, ' + n.filter(function (m) { return m.kind === 'video'; }).length + ' video' : '') + '</small>';
+}
+
+/* ---------- views ---------- */
+function vHome() {
+  $('title').textContent = 'HS DAQ';
+  var h = '<div class="card"><h2>Visit</h2><div class="row">' + field('Visit name', 'v::name', S.visit.name, 'placeholder="Site visit Nov 2026"') +
+    field('Operator', 'v::operator', S.visit.operator) + '</div></div>';
+  h += '<div class="card"><h2>Sessions (one per power-on of the unit)</h2><div class="list">' + (S.sessions.length ? S.sessions.slice().reverse().map(function (s) {
+    var n = S.passes.filter(function (p) { return p.sessionId === s.id; }).length;
+    return '<div data-act="go" data-arg="session:' + s.id + '"><div class="g"><b>Session ' + esc(C.sessionLabel(s)) + '</b><small>unit ' + esc(s.unit || '?') +
+      ' · stick ' + esc(s.stick || '?') + ' · ' + n + ' passes' + (s.offsetMs == null ? ' · clock not checked' : '') + '</small></div><span>›</span></div>';
+  }).join('') : '<div class="mut">No sessions yet.</div>') + '</div><button class="pri" data-act="newSession">+ New session</button></div>';
+  h += '<div class="card"><h2>Joints</h2><div class="list">' + (S.joints.length ? S.joints.map(function (j) {
+    var n = S.passes.filter(function (p) { return p.jointId === j.id; }).length, r = S.insp.filter(function (x) { return x.jointId === j.id; }).length;
+    return '<div data-act="go" data-arg="joint:' + j.id + '"><div class="g"><b>' + esc(j.name || '(unnamed joint)') + '</b><small>' + esc(j.plateIn || '?') + ' in plate · ' +
+      n + ' passes · ' + r + ' inspection reports</small></div><span>›</span></div>';
+  }).join('') : '<div class="mut">No joints yet.</div>') + '</div><button data-act="newJoint">+ New joint</button></div>';
+  var un = S.media.filter(function (m) { return !m.exported && !m.gone; }).length;
+  h += '<div class="card"><h2>Export and backup</h2><button class="pri" data-act="go" data-arg="export">Export' + (un ? ' (' + un + ' media not yet exported)' : '') +
+    '</button><p class="mut" id="store"></p></div>';
+  return h;
+}
+function vSession() {
+  var s = C.by(S.sessions, ui.sid); if (!s) { ui.view = 'home'; return vHome(); }
+  $('title').textContent = 'Session ' + C.sessionLabel(s);
+  var ps = S.passes.filter(function (p) { return p.sessionId === s.id; });
+  var h = '<button class="small" data-act="go" data-arg="home">‹ Home</button><div class="card" style="margin-top:8px"><h2>Unit (read these off the unit\'s screen)</h2><div class="row">' +
+    field('SESSION number', 's:' + s.id + ':num', s.num, 'inputmode="numeric"') + field('Unit', 's:' + s.id + ':unit', s.unit, 'placeholder=".205"') +
+    field('USB stick', 's:' + s.id + ':stick', s.stick, 'placeholder="A"') + '</div>' + field('Session notes', 's:' + s.id + ':notes', s.notes) + '</div>';
+  h += '<div class="card"><h2>Clock check</h2><p class="mut">Type a time a few seconds ahead of the unit\'s clock, then tap the button the moment the unit shows it.</p>' +
+    '<div class="row"><label>Unit clock will read<input type="time" step="1" id="syncT" value="' + esc(s.clockReading || '') + '"></label>' +
+    field('Timezone on its screen', 's:' + s.id + ':clockTz', s.clockTz, 'placeholder="PST"') + '</div><button data-act="sync" data-arg="' + s.id + '">Unit shows this time NOW</button>' +
+    '<p class="mut">' + (s.offsetMs == null ? 'Not checked yet.' : 'Checked at ' + clock(s.clockPhone) + ' phone time: unit clock is ' + (s.offsetMs / 1000).toFixed(1) + ' s from the phone clock.') + '</p></div>';
+  h += '<div class="card"><h2>Passes</h2><div class="list">' + (ps.length ? ps.map(function (p) {
+    return '<div data-act="openPass" data-arg="' + p.id + '"><div class="g">' + passLine(p) + '</div><span>›</span></div>';
+  }).join('') : '<div class="mut">No passes yet.</div>') + '</div><button class="pri" data-act="newPass" data-arg="' + s.id + '">+ New pass</button></div>';
+  if (!ps.length) h += '<button class="danger" data-act="delSession" data-arg="' + s.id + '">Delete this session</button>';
+  return h;
+}
+function photoStrip(list) {
+  return '<div class="thumbs">' + list.map(function (m) {
+    return '<div><img data-thumb="' + m.id + '" alt=""><button data-act="delMedia" data-arg="' + m.id + '">✕</button></div>';
+  }).join('') + '</div>';
+}
+function vJoint() {
+  var j = C.by(S.joints, ui.jid); if (!j) { ui.view = 'home'; return vHome(); }
+  $('title').textContent = 'Joint ' + (j.name || '');
+  var k = 'j:' + j.id + ':', used = S.passes.some(function (p) { return p.jointId === j.id; });
+  var h = '<button class="small" data-act="back">‹ Back</button><div class="card" style="margin-top:8px"><h2>Joint</h2><div class="row">' +
+    field('Joint ID', k + 'name', j.name, 'placeholder="J16"') + num('Plate length (in)', k + 'plateIn', j.plateIn) + num('Thickness (in)', k + 'thickIn', j.thickIn) + '</div><div class="row">' +
+    num('Run-on tab (in)', k + 'leadTabIn', j.leadTabIn) + num('Run-off tab (in)', k + 'exitTabIn', j.exitTabIn) + '</div>' +
+    field('Which end is station A, and how is it marked?', k + 'stationA', j.stationA, 'placeholder="end with the stamped ID; paint dot"') +
+    '<div class="lbl">UT Face A is the</div>' + chips(k + 'faceA', ['front', 'back', 'unknown'], j.faceA) +
+    '<div class="lbl">Plate flipped end-for-end for the backside (A and B swapped on the machine)?</div>' + chips(k + 'mirrored', ['yes', 'no', 'unknown'], j.mirrored) +
+    field('Notes', k + 'notes', j.notes) + '<div class="lbl">Joint photos</div>' +
+    photoStrip(S.media.filter(function (m) { return m.jointId === j.id && !m.inspId; })) +
+    '<button style="margin-top:8px" data-act="photo" data-arg="jointId:' + j.id + '">Take joint photo</button></div>';
+  h += '<div class="card"><h2>Inspection reports (UT / RT)</h2>' + S.insp.filter(function (r) { return r.jointId === j.id; }).map(function (r) {
+    var q = 'i:' + r.id + ':';
+    return '<div style="border-top:1px solid var(--line);padding-top:8px;margin-top:8px">' + chips(q + 'method', ['UT', 'RT', 'VT', 'other'], r.method) + '<div class="row">' +
+      field('Report title / number', q + 'report', r.report) + field('Report date', q + 'date', r.date, 'type="date"') + '</div>' + chips(q + 'result', ['accept', 'reject', 'pending'], r.result) +
+      field('Note', q + 'note', r.note) + photoStrip(C.mediaOf(S, 'inspId', r.id)) +
+      '<div class="row" style="margin-top:8px"><button data-act="photo" data-arg="inspId:' + r.id + '">Photo of report</button><button class="danger" data-act="delInsp" data-arg="' + r.id + '">Remove</button></div></div>';
+  }).join('') + '<button style="margin-top:8px" data-act="addInsp" data-arg="' + j.id + '">+ Add inspection report</button></div>';
+  if (!used) h += '<button class="danger" data-act="delJoint" data-arg="' + j.id + '">Delete this joint</button>';
+  return h;
+}
+function vLive() {
+  var p = curPass(); if (!p) { ui.view = 'home'; return vHome(); }
+  var s = C.by(S.sessions, p.sessionId) || {}, k = 'p:' + p.id + ':', t = C.passTimes(S, p.id), step = C.nextStep(S, p.id), ev = C.passEvents(S, p.id);
+  $('title').textContent = 'S' + (parseInt(s.num, 10) || '?') + ' · W' + (C.weldIdList(p.weldIds).join(',') || '?') + ' · ' + jointName(p.jointId) + ' p' + p.passNo;
+  var h = '<button class="small" data-act="go" data-arg="session:' + p.sessionId + '">‹ Session</button>';
+  h += '<div class="card" style="margin-top:8px"><div class="row"><label>Joint<select data-k="' + k + 'jointId"><option value="">choose…</option>' + S.joints.map(function (j) {
+    return '<option value="' + j.id + '"' + (j.id === p.jointId ? ' selected' : '') + '>' + esc(j.name || '(unnamed)') + '</option>';
+  }).join('') + '</select></label>' + field('Pass in joint', k + 'passNo', p.passNo, 'inputmode="numeric"') +
+    field('WELD ID on unit', k + 'weldIds', p.weldIds, 'inputmode="numbers-and-punctuation" placeholder="3 or 3,4"') + '</div>' +
+    '<div class="lbl">Side welded</div>' + chips(k + 'side', ['front', 'back'], p.side) +
+    '<div class="lbl">Travel direction (plate stations)</div>' + chips(k + 'direction', [['A->B', 'A → B'], ['B->A', 'B → A']], p.direction) +
+    '<div class="lbl">Recording is a</div>' + chips(k + 'kind', ['weld', 'test', 'background'], p.kind) + '</div>';
+  h += '<div class="card"><div id="tm">0:00.0</div><div id="tm2"></div><div class="steps">' + ['ARC_START', 'PLATE_IN', 'PLATE_OUT', 'ARC_STOP'].map(function (x) {
+    var done = { ARC_START: t.arcStart, PLATE_IN: t.plateIn, PLATE_OUT: t.plateOut, ARC_STOP: t.arcStop }[x] != null;
+    return '<span class="' + (done ? 'done' : '') + '">' + C.LABEL[x] + '</span>';
+  }).join('') + '</div><button id="big" class="s-' + step + '" data-act="step" data-arg="' + step + '">' +
+    (step === 'ARC_START' ? (t.arcStart == null ? 'PASS STARTED' : 'ARC RESTARTED') : step === 'PLATE_IN' ? 'ENTERED PLATE' : step === 'PLATE_OUT' ? 'LEFT PLATE' : 'ARC STOPPED') + '</button>' +
+    '<div class="row" style="margin-top:8px">' + (t.welding && step !== 'ARC_STOP' ? '<button class="danger" data-act="step" data-arg="ARC_STOP">Arc stopped</button>' : '') +
+    '<button data-act="mark">Mark</button><button data-act="undo"' + (ev.length ? '' : ' disabled') + '>Undo</button></div>';
+  var mk = C.by(S.events, ui.markId);
+  if (mk && mk.passId === p.id) h += '<div style="margin-top:10px"><div class="lbl">Mark at ' + (t.arcStart != null ? C.secs(t.arcStart, mk.t) + ' s' : clock(mk.t)) + ': what happened?</div>' +
+    chips('e:' + mk.id + ':tag', MARKS, mk.tag) + field('Detail', 'e:' + mk.id + ':note', mk.note) + '<button data-act="markDone">Done</button></div>';
+  h += '</div>';
+  var vids = C.mediaOf(S, 'passId', p.id, 'video'), pics = C.mediaOf(S, 'passId', p.id, 'photo');
+  h += '<div class="card"><h2>Video and photos</h2><div class="row"><button class="' + (rec ? 'danger' : '') + '" data-act="video">' + (rec ? 'Stop video' : 'Record video') +
+    '</button><button data-act="photo" data-arg="passId:' + p.id + '">Photo</button></div>' + (pics.length ? '<div style="margin-top:8px">' + photoStrip(pics) + '</div>' : '') +
+    '<div class="list">' + vids.map(function (m) {
+      return '<div><div class="g"><b>Video</b><small>' + (m.t0 ? clock(m.t0) + ' · ' : '') + (m.t0 && m.t1 ? dur(m.t1 - m.t0) + ' · ' : '') + mb(m.size || 0) +
+        (m === recMedia ? ' · RECORDING' : '') + '</small></div>' + (m === recMedia ? '' : '<button class="small danger" data-act="delMedia" data-arg="' + m.id + '">✕</button>') + '</div>';
+    }).join('') + '</div><button class="small" style="margin-top:6px" data-act="attachVideo">Attach a video taken with the Camera app</button></div>';
+  h += '<div class="card"><h2>Parameters</h2><div class="row">' + num('Volts', k + 'volts', p.volts) + num('Amps', k + 'amps', p.amps) + num('Travel (in/min)', k + 'ipm', p.ipm) +
+    num('Stickout (in)', k + 'stickout', p.stickout) + '</div><div class="lbl">Wire</div>' + chips(k + 'wire', ['single', 'twin'], p.wire) +
+    '<div class="lbl">Microphone relative to travel</div>' + chips(k + 'mic', ['leading', 'trailing'], p.mic) + '</div>';
+  h += '<div class="card"><h2>Intent and notes</h2><div class="lbl">What this pass is meant to be</div>' + chips(k + 'intent', INTENTS, p.intent) +
+    '<div class="lbl">Conditions during the pass</div>' + chips(k + 'conditions', CONDITIONS, p.conditions, true) +
+    '<label>Pass notes<textarea data-k="' + k + 'note">' + esc(p.note) + '</textarea></label>' +
+    '<div class="lbl">After the pass: did it go as intended?</div>' + chips(k + 'verdict', ['as intended', 'not as intended', 'unsure'], p.verdict) + '</div>';
+  h += '<div class="card"><h2>Log</h2><div class="list">' + (ev.length ? ev.map(function (e) {
+    return '<div><div class="g"><b>' + C.LABEL[e.type] + (e.tag ? ': ' + esc(e.tag) : '') + '</b><small>' + clock(e.t) + (t.arcStart != null ? ' · ' + C.secs(t.arcStart, e.t) + ' s' : '') +
+      (e.note ? ' · ' + esc(e.note) : '') + '</small></div>' + (e.type === 'MARK' ? '<button class="small" data-act="editMark" data-arg="' + e.id + '">Edit</button>' : '') +
+      '<button class="small danger" data-act="delEvent" data-arg="' + e.id + '">✕</button></div>';
+  }).join('') : '<div class="mut">Nothing logged yet.</div>') + '</div></div>';
+  h += '<button class="pri" data-act="nextPass" data-arg="' + p.sessionId + '">Next pass ›</button>' +
+    '<button class="danger" style="margin-top:8px" data-act="delPass" data-arg="' + p.id + '">Delete this pass</button>';
+  return h;
+}
+function vExport() {
+  $('title').textContent = 'Export';
+  var photos = S.media.filter(function (m) { return m.kind === 'photo' && !m.gone; }), vids = S.media.filter(function (m) { return m.kind === 'video' && !m.gone; });
+  var pu = photos.filter(function (m) { return !m.exported; }).length, exp = S.media.filter(function (m) { return m.exported && !m.gone; });
+  var h = '<button class="small" data-act="go" data-arg="home">‹ Home</button>';
+  if (ui.pending) h += '<div class="card" style="margin-top:8px;border-color:var(--acc)"><h2>Files ready</h2><button class="pri" data-act="pendingShare">Tap to share ' + ui.pending.files.length + ' file(s)</button></div>';
+  h += '<div class="card" style="margin-top:8px"><h2>Data</h2><p class="mut">' + S.sessions.length + ' sessions, ' + S.passes.length + ' passes, ' + S.joints.length + ' joints. Five CSV files and a full backup (no photos or videos inside).</p>' +
+    '<button class="pri" data-act="shareData">Share data files</button></div>';
+  h += '<div class="card"><h2>Photos</h2><p class="mut">' + photos.length + ' photos, ' + pu + ' not yet exported. Shared 15 at a time.</p><button data-act="sharePhotos"' + (pu ? '' : ' disabled') + '>Share next ' + Math.min(15, pu) + ' photos</button></div>';
+  h += '<div class="card"><h2>Videos</h2><div class="list">' + (vids.length ? vids.map(function (m) {
+    return '<div><div class="g"><b>' + esc(C.mediaName(S, m)) + '</b><small>' + mb(m.size || 0) + (m.exported ? ' · exported' : ' · NOT exported') + '</small></div><button class="small" data-act="shareVideo" data-arg="' + m.id + '">Share</button></div>';
+  }).join('') : '<div class="mut">No videos.</div>') + '</div></div>';
+  h += '<div class="card"><h2>Backup and space</h2><p class="mut" id="store"></p><button data-act="restore">Restore from a backup file</button>' +
+    '<button class="danger" style="margin-top:8px" data-act="purge"' + (exp.length ? '' : ' disabled') + '>Free space: remove ' + exp.length + ' exported photos / videos from this phone</button></div>';
+  return h;
+}
+function render() {
+  var v = { home: vHome, session: vSession, joint: vJoint, live: vLive, 'export': vExport }[ui.view] || vHome;
+  $('app').innerHTML = v();
+  Array.prototype.forEach.call(document.querySelectorAll('img[data-thumb]'), function (img) {
+    getBlob('t:' + img.getAttribute('data-thumb')).then(function (u) { if (u) img.src = u; });
+  });
+  var st = $('store');
+  if (st && navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then(function (e) {
+    st.textContent = 'Phone storage used by this app: ' + mb(e.usage || 0) + ' of about ' + mb(e.quota || 0) + ' allowed.';
+  });
+  if (ui.view === 'live') { wakeOn(); tick(); } else wakeOff();
+}
+function go(view, id) {
+  if (ui.view === 'live' && view !== 'live' && rec) stopVideo();
+  ui.prev = ui.view; ui.view = view; ui.pending = null; ui.markId = null;
+  if (view === 'session') ui.sid = id; if (view === 'joint') ui.jid = id; if (view === 'live') ui.pid = id;
+  S.active = view === 'live' ? { passId: id } : {};
+  save(); render(); window.scrollTo(0, 0);
+}
+
+/* ---------- stopwatch ---------- */
+function tick() {
+  var p = ui.view === 'live' && curPass(), el = $('tm'); if (!p || !el) return;
+  var t = C.passTimes(S, p.id), now = Date.now(), sub = '';
+  el.textContent = t.arcStart == null ? '0:00.0' : dur((t.welding ? now : t.arcStop) - t.arcStart);
+  if (t.welding && t.plateIn != null && t.plateOut == null) sub = 'on the plate for ' + dur(now - t.plateIn);
+  else if (t.plateIn != null && t.plateOut != null) sub = 'on the plate ' + dur(t.plateOut - t.plateIn) + ' (in at ' + C.secs(t.arcStart, t.plateIn) + ' s, out at ' + C.secs(t.arcStart, t.plateOut) + ' s)';
+  else if (t.welding) sub = 'arc on, not yet on the plate';
+  $('tm2').textContent = sub;
+}
+setInterval(tick, 100);
+function logEvent(type, extra) {
+  var p = curPass(); if (!p) return null;
+  /* one guard for all four stopwatch taps: a double tap on the big button must not skip a step */
+  var now = tapTime(), g = type === 'MARK' ? 'MARK' : 'STEP'; if (now - (lastTap[g] || 0) < 700) return null; lastTap[g] = now;
+  var e = { id: C.uid(), passId: p.id, t: now, type: type, tag: '', note: '' };
+  if (extra) Object.keys(extra).forEach(function (x) { e[x] = extra[x]; });
+  S.events.push(e); save(); return e;
+}
+function wakeOn() { if (!wake && navigator.wakeLock) navigator.wakeLock.request('screen').then(function (w) { wake = w; w.addEventListener('release', function () { wake = null; }); }).catch(function () {}); }
+function wakeOff() { if (wake) { wake.release().catch(function () {}); wake = null; } }
+
+/* ---------- photos and video ---------- */
+function scaleImage(src, w, h, max, q, asUrl) {
+  var r = Math.min(1, max / Math.max(w, h)), c = document.createElement('canvas'); c.width = Math.round(w * r); c.height = Math.round(h * r);
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  if (asUrl) return Promise.resolve(c.toDataURL('image/jpeg', q));
+  return new Promise(function (res) { c.toBlob(res, 'image/jpeg', q); });
+}
+function storePhoto(src, w, h, target, t) {
+  var m = { id: C.uid(), kind: 'photo', t0: t, t1: t, mime: 'image/jpeg', size: 0, exported: false }; m[target[0]] = target[1];
+  if (target[0] === 'inspId') { var r = C.by(S.insp, target[1]); if (r) m.jointId = r.jointId; }
+  return scaleImage(src, w, h, 2000, 0.85).then(function (b) {
+    m.size = b.size; return putBlob('m:' + m.id, b);
+  }).then(function () { return scaleImage(src, w, h, 200, 0.7, true); }).then(function (u) { return putBlob('t:' + m.id, u); })
+    .then(function () { S.media.push(m); save(); render(); toast('Photo saved'); })
+    .catch(function (e) { warn('PHOTO NOT SAVED: ' + (e && e.message || e)); });
+}
+function takePhoto(arg) {
+  var target = arg.split(':'), t = tapTime(), pv = $('pv');
+  if (stream && pv.videoWidth) { storePhoto(pv, pv.videoWidth, pv.videoHeight, target, t); return; }
+  ui.photoTarget = target; $('photoIn').value = ''; $('photoIn').click();
+}
+$('photoIn').addEventListener('change', function () {
+  var f = this.files && this.files[0], target = ui.photoTarget; if (!f || !target) return;
+  var img = new Image(), url = URL.createObjectURL(f);
+  img.onload = function () { storePhoto(img, img.naturalWidth, img.naturalHeight, target, f.lastModified || Date.now()).then(function () { URL.revokeObjectURL(url); }); };
+  img.onerror = function () { toast('Could not read that photo'); }; img.src = url;
+});
+function startVideo() {
+  var p = curPass(); if (!p || rec) return;
+  if (!navigator.mediaDevices || !window.MediaRecorder) { toast('In-app video is not available here. Use "Attach a video".'); return; }
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }).then(function (st) {
+    stream = st; var pv = $('pv'); pv.srcObject = st; pv.play().catch(function () {}); $('cam').hidden = false;
+    var seq = 0, m = { id: C.uid(), passId: p.id, kind: 'video', t0: null, t1: null, mime: '', size: 0, exported: false };
+    rec = new MediaRecorder(st, { videoBitsPerSecond: 2500000 }); m.mime = rec.mimeType || 'video/mp4'; recMedia = m;
+    rec.onstart = function () { m.t0 = Date.now(); save(); };
+    rec.ondataavailable = function (e) {
+      if (!e.data || !e.data.size) return;
+      m.size += e.data.size; if (rec && rec.state === 'recording') m.t1 = Date.now();
+      putBlob('v:' + m.id + ':' + C.pad(seq++, 6), e.data).then(save).catch(function (err) { warn('VIDEO NOT SAVING: ' + (err && err.message || err)); });
+    };
+    rec.onerror = function () { toast('Video recording stopped by the phone'); endVideo(); };
+    rec.onstop = endVideo;
+    st.getTracks().forEach(function (tr) { tr.onended = function () { if (rec && rec.state === 'recording') stopVideo(); }; });
+    rec.start(2000); m.t0 = Date.now(); S.media.push(m); save(); render();
+  }).catch(function (e) { toast('Camera not available: ' + (e && e.message || e)); });
+}
+function stopVideo() { if (rec && rec.state !== 'inactive') { if (recMedia) recMedia.t1 = Date.now(); rec.stop(); } else endVideo(); }
+function endVideo() {
+  if (stream) stream.getTracks().forEach(function (tr) { tr.onended = null; tr.stop(); });
+  stream = null; rec = null; recMedia = null; $('pv').srcObject = null; $('cam').hidden = true; save(); render();
+}
+$('videoIn').addEventListener('change', function () {
+  var f = this.files && this.files[0], p = curPass(); if (!f || !p) return;
+  var m = { id: C.uid(), passId: p.id, kind: 'video', t0: null, t1: f.lastModified || Date.now(), mime: f.type || 'video/quicktime', size: f.size, exported: false, attached: true };
+  putBlob('v:' + m.id + ':000000', f).then(function () { S.media.push(m); save(); render(); toast('Video attached'); })
+    .catch(function (e) { warn('VIDEO NOT SAVED: ' + (e && e.message || e)); });
+});
+
+/* ---------- sharing ---------- */
+function finishShare(done) { if (done) done(); save(); render(); }
+function shareFiles(files, done) {
+  if (navigator.canShare && navigator.canShare({ files: files })) {
+    navigator.share({ files: files }).then(function () { finishShare(done); }).catch(function (err) {
+      if (err && err.name === 'NotAllowedError') { ui.pending = { files: files, done: done }; render(); window.scrollTo(0, 0); }
+      else if (!err || err.name !== 'AbortError') toast('Share failed: ' + (err && err.message || err));
+    });
+  } else {
+    files.forEach(function (f, i) {
+      setTimeout(function () { var a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); }, i * 400);
+    });
+    finishShare(done);
+  }
+}
+function stamp() { var d = new Date(); return d.getFullYear() + C.pad(d.getMonth() + 1, 2) + C.pad(d.getDate(), 2) + '-' + C.pad(d.getHours(), 2) + C.pad(d.getMinutes(), 2); }
+function mediaFiles(list) {
+  return Promise.all(list.map(function (m) {
+    return mediaBlob(m).then(function (b) { return b ? new File([b], C.mediaName(S, m), { type: m.kind === 'photo' ? 'image/jpeg' : (m.mime || 'video/mp4').split(';')[0] }) : null; });
+  }));
+}
+function shareMedia(list) {
+  mediaFiles(list).then(function (files) {
+    var ok = list.filter(function (m, i) { return files[i]; }), missing = list.length - ok.length;
+    if (missing) toast(missing + ' file(s) are missing from phone storage');
+    if (!ok.length) return;
+    shareFiles(files.filter(Boolean), function () { ok.forEach(function (m) { m.exported = true; }); });
+  }).catch(function (e) { toast('Could not load media: ' + (e && e.message || e)); });
+}
+
+/* ---------- actions ---------- */
+var ACT = {
+  go: function (arg) { var a = arg.split(':'); go(a[0], a[1]); },
+  back: function () { if (ui.prev === 'live' && curPass()) go('live', ui.pid); else go('home'); },
+  newSession: function () {
+    var last = S.sessions[S.sessions.length - 1], s = { id: C.uid(), num: last && parseInt(last.num, 10) ? String(parseInt(last.num, 10) + 1) : '', unit: last ? last.unit : '',
+      stick: last ? last.stick : '', created: Date.now(), clockReading: '', clockPhone: null, offsetMs: null, clockTz: last ? last.clockTz : '', notes: '' };
+    S.sessions.push(s); go('session', s.id);
+  },
+  delSession: function (id) { if (confirm('Delete this empty session?')) { S.sessions = S.sessions.filter(function (s) { return s.id !== id; }); go('home'); } },
+  sync: function (id) {
+    var s = C.by(S.sessions, id), v = $('syncT').value, t = tapTime(); if (!v) { toast('Type the time the unit will show first'); return; }
+    var a = v.split(':').map(Number), reading = ((a[0] * 60 + a[1]) * 60 + (a[2] || 0)) * 1000, d = new Date(t);
+    var off = reading - ((d.getHours() * 60 + d.getMinutes()) * 60 + d.getSeconds()) * 1000 - d.getMilliseconds();
+    if (off > 43200000) off -= 86400000; if (off < -43200000) off += 86400000;
+    s.clockReading = v; s.clockPhone = t; s.offsetMs = off; save(); render();
+  },
+  newJoint: function () {
+    var last = S.joints[S.joints.length - 1], m = last && /^(.*?)(\d+)$/.exec(last.name || '');
+    var j = { id: C.uid(), name: m ? m[1] + (parseInt(m[2], 10) + 1) : '', plateIn: last ? last.plateIn : '', thickIn: last ? last.thickIn : '', leadTabIn: last ? last.leadTabIn : '',
+      exitTabIn: last ? last.exitTabIn : '', stationA: last ? last.stationA : '', faceA: '', mirrored: '', notes: '' };
+    S.joints.push(j); go('joint', j.id);
+  },
+  delJoint: function (id) {
+    if (!confirm('Delete this joint and its inspection reports?')) return;
+    S.media.filter(function (m) { return m.jointId === id; }).forEach(dropMediaBlobs);
+    S.media = S.media.filter(function (m) { return m.jointId !== id; }); S.insp = S.insp.filter(function (r) { return r.jointId !== id; });
+    S.joints = S.joints.filter(function (j) { return j.id !== id; }); go('home');
+  },
+  addInsp: function (jid) { S.insp.push({ id: C.uid(), jointId: jid, method: '', report: '', date: '', result: 'pending', note: '', t: Date.now() }); save(); render(); },
+  delInsp: function (id) {
+    if (!confirm('Remove this inspection report and its photos?')) return;
+    C.mediaOf(S, 'inspId', id).forEach(dropMediaBlobs); S.media = S.media.filter(function (m) { return m.inspId !== id; });
+    S.insp = S.insp.filter(function (r) { return r.id !== id; }); save(); render();
+  },
+  newPass: function (sid) {
+    var d = C.nextPassDefaults(S, sid); d.id = C.uid(); d.sessionId = sid; d.created = Date.now(); S.passes.push(d); go('live', d.id);
+  },
+  nextPass: function (sid) {
+    var p = curPass(), t = p && C.passTimes(S, p.id);
+    if (t && t.welding && !confirm('The arc is still marked as on for this pass. Start the next pass anyway?')) return;
+    ACT.newPass(sid);
+  },
+  openPass: function (id) { go('live', id); },
+  delPass: function (id) {
+    if (!confirm('Delete this pass, its log, photos and videos? This cannot be undone.')) return;
+    if (rec) stopVideo();
+    var p = C.by(S.passes, id), sid = p.sessionId;
+    C.mediaOf(S, 'passId', id).forEach(dropMediaBlobs); S.media = S.media.filter(function (m) { return m.passId !== id; });
+    S.events = S.events.filter(function (e) { return e.passId !== id; }); S.passes = S.passes.filter(function (q) { return q.id !== id; }); go('session', sid);
+  },
+  step: function (type) { if (logEvent(type)) render(); },
+  mark: function () { var e = logEvent('MARK'); if (e) { ui.markId = e.id; render(); } },
+  editMark: function (id) { ui.markId = id; render(); },
+  markDone: function () { ui.markId = null; render(); },
+  undo: function () {
+    var p = curPass(), ev = p && C.passEvents(S, p.id); if (!ev || !ev.length) return;
+    var e = ev[ev.length - 1]; if (!confirm('Remove the last entry (' + C.LABEL[e.type] + ' at ' + clock(e.t) + ')?')) return;
+    S.events = S.events.filter(function (x) { return x.id !== e.id; }); save(); render();
+  },
+  delEvent: function (id) {
+    var e = C.by(S.events, id); if (!e || !confirm('Remove "' + C.LABEL[e.type] + '" at ' + clock(e.t) + '?')) return;
+    S.events = S.events.filter(function (x) { return x.id !== id; }); save(); render();
+  },
+  video: function () { if (rec) stopVideo(); else startVideo(); },
+  attachVideo: function () { $('videoIn').value = ''; $('videoIn').click(); },
+  photo: function (arg) { takePhoto(arg); },
+  delMedia: function (id) {
+    var m = C.by(S.media, id); if (!m || !confirm('Delete this ' + m.kind + '?')) return;
+    dropMediaBlobs(m); S.media = S.media.filter(function (x) { return x.id !== id; }); save(); render();
+  },
+  shareData: function () {
+    var files = C.exportFiles(S, stamp()).map(function (f) { return new File([f.text], f.name, { type: /json$/.test(f.name) ? 'application/json' : 'text/csv' }); });
+    shareFiles(files, function () { S.lastExport = Date.now(); });
+  },
+  sharePhotos: function () { shareMedia(S.media.filter(function (m) { return m.kind === 'photo' && !m.exported && !m.gone; }).slice(0, 15)); },
+  shareVideo: function (id) { var m = C.by(S.media, id); if (m === recMedia) { toast('Stop the recording first'); return; } if (m) { toast('Preparing video…'); shareMedia([m]); } },
+  pendingShare: function () {
+    var p = ui.pending; if (!p) return; ui.pending = null;
+    navigator.share({ files: p.files }).then(function () { finishShare(p.done); }).catch(function (err) { if (!err || err.name !== 'AbortError') toast('Share failed: ' + (err && err.message || err)); render(); });
+  },
+  restore: function () { $('restoreIn').value = ''; $('restoreIn').click(); },
+  purge: function () {
+    var list = S.media.filter(function (m) { return m.exported && !m.gone; });
+    if (!confirm('Remove ' + list.length + ' exported photos / videos from this phone? Make sure they arrived where you sent them: this cannot be undone.')) return;
+    Promise.all(list.map(dropMediaBlobs)).then(function () { list.forEach(function (m) { m.gone = true; }); save(); render(); toast('Removed'); });
+  }
+};
+$('restoreIn').addEventListener('change', function () {
+  var f = this.files && this.files[0]; if (!f) return;
+  f.text().then(function (txt) {
+    var b = JSON.parse(txt); if (!b || b.app !== 'hsdaq' || !b.state) throw new Error('not an HS DAQ backup file');
+    var over = confirm('Where the backup and this phone both hold the same record, use the backup\'s copy?\n\nOK = backup wins. Cancel = keep this phone\'s copy and only add what is missing.');
+    var r = C.mergeState(S, b.state, over); save(); render(); toast('Restored: ' + r.added + ' added, ' + r.replaced + ' replaced');
+  }).catch(function (e) { toast('Restore failed: ' + (e && e.message || e)); });
+});
+
+/* ---------- wiring ---------- */
+document.addEventListener('pointerdown', function () { lastDown = Date.now(); }, true);
+document.addEventListener('input', function (e) {
+  var k = e.target.getAttribute && e.target.getAttribute('data-k'); if (!k) return;
+  var a = k.split(':'), o = obj(a[0], a[1]); if (!o) return;
+  o[a[2]] = e.target.value;
+  if (a[0] === 'p' && a[2] === 'jointId') {
+    o.passNo = S.passes.filter(function (q) { return q.id !== o.id && q.jointId === o.jointId && q.kind === 'weld'; }).length + 1; save(); render(); return;
+  }
+  save();
+});
+document.addEventListener('click', function (e) {
+  var t = e.target.closest ? e.target.closest('[data-set],[data-act]') : null; if (!t || t.disabled) return;
+  if (t.hasAttribute('data-set')) {
+    var a = t.getAttribute('data-set').split(':'), o = obj(a[0], a[1]), f = a[2], v = a.slice(3).join(':'); if (!o) return;
+    if (t.hasAttribute('data-multi')) { o[f] = o[f] || []; var i = o[f].indexOf(v); if (i < 0) o[f].push(v); else o[f].splice(i, 1); }
+    else o[f] = (o[f] === v ? '' : v);
+    save(); render(); return;
+  }
+  var fn = ACT[t.getAttribute('data-act')]; if (fn) fn(t.getAttribute('data-arg') || '', t);
+});
+document.addEventListener('visibilitychange', function () { if (!document.hidden && ui.view === 'live') wakeOn(); });
+window.addEventListener('pagehide', function () { save(); });
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(function () {});
+if (window.self !== window.top) warn('This page is inside a frame: storage here may be temporary. Open it directly in Safari.');
+/* Videos that were recording when the page died keep their saved pieces; give them an end time. */
+S.media.forEach(function (m) { if (m.kind === 'video' && m.t0 && !m.t1) m.t1 = m.t0; });
+if (S.active && S.active.passId && C.by(S.passes, S.active.passId)) { ui.view = 'live'; ui.pid = S.active.passId; }
+render();
+})();
+</script>
+</body>
+</html>
