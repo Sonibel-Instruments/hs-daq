@@ -52,7 +52,7 @@ button.small{width:auto;padding:6px 10px;font-size:13px}
 </style>
 </head>
 <body>
-<header><b id="title">HS DAQ</b><small id="ver">v2026-11-11a</small></header>
+<header><b id="title">HS DAQ</b><small id="ver">v2026-11-11b</small></header>
 <div id="warn" hidden></div>
 <div id="cam" hidden><video id="pv" playsinline muted></video><span>REC</span></div>
 <main id="app"></main>
@@ -65,8 +65,8 @@ button.small{width:auto;padding:6px 10px;font-size:13px}
 (function () {
 'use strict';
 var C = HSCore, KEY = 'hsdaq.v1', $ = function (id) { return document.getElementById(id); };
-var INTENTS = ['good / nominal', 'slag / roll attempt', 'porosity recipe', 'long stickout', 'short stickout', 'single wire', 'overspeed', 'other'];
-var CONDITIONS = ['long stickout', 'short stickout', 'single wire', 'overspeed', 'low flux', 'water / wet flux', 'contaminated', 'parameters changed'];
+var INTENTS = ['good / nominal', 'slag inclusion', 'porosity', 'lack of fusion (LOF)', 'long stickout', 'short stickout', 'single wire', 'other'];
+var CONDITIONS = ['overspeed', 'roll attempt', 'long stickout', 'short stickout', 'single wire', 'low flux', 'water / wet flux', 'contaminated', 'parameters changed'];
 var MARKS = ['arc dropped', 'arc-start failure', 'flux out', 'parameter change', 'induced defect here', 'visible defect', 'background noise', 'other'];
 var S = load(), ui = { view: 'home' }, lastDown = 0, lastTap = {}, rec = null, stream = null, recMedia = null, wake = null;
 
@@ -139,8 +139,7 @@ function vHome() {
     field('Operator', 'v::operator', S.visit.operator) + '</div></div>';
   h += '<div class="card"><h2>Sessions (one per power-on of the unit)</h2><div class="list">' + (S.sessions.length ? S.sessions.slice().reverse().map(function (s) {
     var n = S.passes.filter(function (p) { return p.sessionId === s.id; }).length;
-    return '<div data-act="go" data-arg="session:' + s.id + '"><div class="g"><b>Session ' + esc(C.sessionLabel(s)) + '</b><small>unit ' + esc(s.unit || '?') +
-      ' · stick ' + esc(s.stick || '?') + ' · ' + n + ' passes' + (s.offsetMs == null ? ' · clock not checked' : '') + '</small></div><span>›</span></div>';
+    return '<div data-act="go" data-arg="session:' + s.id + '"><div class="g"><b>Session ' + esc(C.sessionLabel(s)) + '</b><small>unit ' + esc(s.unit || '?') + ' · ' + n + ' passes' + (s.offsetMs == null ? ' · clock not checked' : '') + '</small></div><span>›</span></div>';
   }).join('') : '<div class="mut">No sessions yet.</div>') + '</div><button class="pri" data-act="newSession">+ New session</button></div>';
   h += '<div class="card"><h2>Joints</h2><div class="list">' + (S.joints.length ? S.joints.map(function (j) {
     var n = S.passes.filter(function (p) { return p.jointId === j.id; }).length, r = S.insp.filter(function (x) { return x.jointId === j.id; }).length;
@@ -155,13 +154,15 @@ function vHome() {
 function vSession() {
   var s = C.by(S.sessions, ui.sid); if (!s) { ui.view = 'home'; return vHome(); }
   $('title').textContent = 'Session ' + C.sessionLabel(s);
-  var ps = S.passes.filter(function (p) { return p.sessionId === s.id; });
+  var ps = S.passes.filter(function (p) { return p.sessionId === s.id; }), cr = (s.clockReading || '').split(':');
   var h = '<button class="small" data-act="go" data-arg="home">‹ Home</button><div class="card" style="margin-top:8px"><h2>Unit (read these off the unit\'s screen)</h2><div class="row">' +
-    field('SESSION number', 's:' + s.id + ':num', s.num, 'inputmode="numeric"') + field('Unit', 's:' + s.id + ':unit', s.unit, 'placeholder=".205"') +
-    field('USB stick', 's:' + s.id + ':stick', s.stick, 'placeholder="A"') + '</div>' + field('Session notes', 's:' + s.id + ':notes', s.notes) + '</div>';
-  h += '<div class="card"><h2>Clock check</h2><p class="mut">Type a time a few seconds ahead of the unit\'s clock, then tap the button the moment the unit shows it.</p>' +
-    '<div class="row"><label>Unit clock will read<input type="time" step="1" id="syncT" value="' + esc(s.clockReading || '') + '"></label>' +
-    field('Timezone on its screen', 's:' + s.id + ':clockTz', s.clockTz, 'placeholder="PST"') + '</div><button data-act="sync" data-arg="' + s.id + '">Unit shows this time NOW</button>' +
+    field('SESSION number', 's:' + s.id + ':num', s.num, 'inputmode="numeric"') + field('Unit number', 's:' + s.id + ':unit', s.unit, 'inputmode="numeric" placeholder="1"') + '</div>' + field('Session notes', 's:' + s.id + ':notes', s.notes) + '</div>';
+  h += '<div class="card"><h2>Clock check</h2><p class="mut">Type a time a few seconds ahead of the unit\'s clock, to the second, then tap the button the moment the unit shows it.</p>' +
+    '<div class="row">' + ['H', 'M', 'S'].map(function (x, i) {
+      return '<label>' + ['Hour', 'Min', 'Sec'][i] + '<input id="sync' + x + '" inputmode="numeric" maxlength="2" value="' + esc(cr[i] || '') + '"></label>';
+    }).join('') + field('Timezone shown', 's:' + s.id + ':clockTz', s.clockTz, 'placeholder="PST"') + '</div>' +
+    '<button class="small" data-act="syncPrefill">Fill in 15 s from now (phone clock)</button>' +
+    '<button class="pri" style="margin-top:8px" data-act="sync" data-arg="' + s.id + '">Unit shows this time NOW</button>' +
     '<p class="mut">' + (s.offsetMs == null ? 'Not checked yet.' : 'Checked at ' + clock(s.clockPhone) + ' phone time: unit clock is ' + (s.offsetMs / 1000).toFixed(1) + ' s from the phone clock.') + '</p></div>';
   h += '<div class="card"><h2>Passes</h2><div class="list">' + (ps.length ? ps.map(function (p) {
     return '<div data-act="openPass" data-arg="' + p.id + '"><div class="g">' + passLine(p) + '</div><span>›</span></div>';
@@ -206,6 +207,7 @@ function vLive() {
     return '<option value="' + j.id + '"' + (j.id === p.jointId ? ' selected' : '') + '>' + esc(j.name || '(unnamed)') + '</option>';
   }).join('') + '</select></label>' + field('Pass in joint', k + 'passNo', p.passNo, 'inputmode="numeric"') +
     field('WELD ID on unit', k + 'weldIds', p.weldIds, 'inputmode="numbers-and-punctuation" placeholder="3 or 3,4"') + '</div>' +
+    '<button class="small" style="margin-bottom:10px" data-act="newJointForPass">+ New joint</button>' +
     '<div class="lbl">Side welded</div>' + chips(k + 'side', ['front', 'back'], p.side) +
     '<div class="lbl">Travel direction (plate stations)</div>' + chips(k + 'direction', [['A->B', 'A → B'], ['B->A', 'B → A']], p.direction) +
     '<div class="lbl">Recording is a</div>' + chips(k + 'kind', ['weld', 'test', 'background'], p.kind) + '</div>';
@@ -215,7 +217,8 @@ function vLive() {
   }).join('') + '</div><button id="big" class="s-' + step + '" data-act="step" data-arg="' + step + '">' +
     (step === 'ARC_START' ? (t.arcStart == null ? 'PASS STARTED' : 'ARC RESTARTED') : step === 'PLATE_IN' ? 'ENTERED PLATE' : step === 'PLATE_OUT' ? 'LEFT PLATE' : 'ARC STOPPED') + '</button>' +
     '<div class="row" style="margin-top:8px">' + (t.welding && step !== 'ARC_STOP' ? '<button class="danger" data-act="step" data-arg="ARC_STOP">Arc stopped</button>' : '') +
-    '<button data-act="mark">Mark</button><button data-act="undo"' + (ev.length ? '' : ' disabled') + '>Undo</button></div>';
+    '<button data-act="mark">Mark</button><button data-act="undo"' + (ev.length ? '' : ' disabled') + '>Undo</button></div>' +
+    '<button class="small" style="margin-top:8px" data-act="splitId">Unit jumped to the next WELD ID mid-pass (still this pass)</button>';
   var mk = C.by(S.events, ui.markId);
   if (mk && mk.passId === p.id) h += '<div style="margin-top:10px"><div class="lbl">Mark at ' + (t.arcStart != null ? C.secs(t.arcStart, mk.t) + ' s' : clock(mk.t)) + ': what happened?</div>' +
     chips('e:' + mk.id + ':tag', MARKS, mk.tag) + field('Detail', 'e:' + mk.id + ':note', mk.note) + '<button data-act="markDone">Done</button></div>';
@@ -230,8 +233,9 @@ function vLive() {
   h += '<div class="card"><h2>Parameters</h2><div class="row">' + num('Volts', k + 'volts', p.volts) + num('Amps', k + 'amps', p.amps) + num('Travel (in/min)', k + 'ipm', p.ipm) +
     num('Stickout (in)', k + 'stickout', p.stickout) + '</div><div class="lbl">Wire</div>' + chips(k + 'wire', ['single', 'twin'], p.wire) +
     '<div class="lbl">Microphone relative to travel</div>' + chips(k + 'mic', ['leading', 'trailing'], p.mic) + '</div>';
-  h += '<div class="card"><h2>Intent and notes</h2><div class="lbl">What this pass is meant to be</div>' + chips(k + 'intent', INTENTS, p.intent) +
-    '<div class="lbl">Conditions during the pass</div>' + chips(k + 'conditions', CONDITIONS, p.conditions, true) +
+  h += '<div class="card"><h2>Intent and notes</h2><div class="lbl">What this pass is meant to produce</div>' + chips(k + 'intent', INTENTS, p.intent) +
+    '<div class="lbl">Method / conditions (how it is being produced, and anything else going on)</div>' + chips(k + 'conditions', CONDITIONS, p.conditions, true) +
+    field('Other method / condition', k + 'conditionOther', p.conditionOther) +
     '<label>Pass notes<textarea data-k="' + k + 'note">' + esc(p.note) + '</textarea></label>' +
     '<div class="lbl">After the pass: did it go as intended?</div>' + chips(k + 'verdict', ['as intended', 'not as intended', 'unsure'], p.verdict) + '</div>';
   h += '<div class="card"><h2>Log</h2><div class="list">' + (ev.length ? ev.map(function (e) {
@@ -249,9 +253,9 @@ function vExport() {
   var pu = photos.filter(function (m) { return !m.exported; }).length, exp = S.media.filter(function (m) { return m.exported && !m.gone; });
   var h = '<button class="small" data-act="go" data-arg="home">‹ Home</button>';
   if (ui.pending) h += '<div class="card" style="margin-top:8px;border-color:var(--acc)"><h2>Files ready</h2><button class="pri" data-act="pendingShare">Tap to share ' + ui.pending.files.length + ' file(s)</button></div>';
-  h += '<div class="card" style="margin-top:8px"><h2>Data</h2><p class="mut">' + S.sessions.length + ' sessions, ' + S.passes.length + ' passes, ' + S.joints.length + ' joints. Five CSV files and a full backup (no photos or videos inside).</p>' +
-    '<button class="pri" data-act="shareData">Share data files</button></div>';
-  h += '<div class="card"><h2>Photos</h2><p class="mut">' + photos.length + ' photos, ' + pu + ' not yet exported. Shared 15 at a time.</p><button data-act="sharePhotos"' + (pu ? '' : ' disabled') + '>Share next ' + Math.min(15, pu) + ' photos</button></div>';
+  h += '<div class="card" style="margin-top:8px"><h2>Data</h2><p class="mut">' + S.sessions.length + ' sessions, ' + S.passes.length + ' passes, ' + S.joints.length + ' joints. One zip holding five CSV files and a full backup (no photos or videos inside). Every share is a complete snapshot of this phone.</p>' +
+    '<button class="pri" data-act="shareData">Share data (one zip)</button></div>';
+  h += '<div class="card"><h2>Photos</h2><p class="mut">' + photos.length + ' photos, ' + pu + ' not yet exported. Shared as one zip, 30 at a time.</p><button data-act="sharePhotos"' + (pu ? '' : ' disabled') + '>Share next ' + Math.min(30, pu) + ' photos</button></div>';
   h += '<div class="card"><h2>Videos</h2><div class="list">' + (vids.length ? vids.map(function (m) {
     return '<div><div class="g"><b>' + esc(C.mediaName(S, m)) + '</b><small>' + mb(m.size || 0) + (m.exported ? ' · exported' : ' · NOT exported') + '</small></div><button class="small" data-act="shareVideo" data-arg="' + m.id + '">Share</button></div>';
   }).join('') : '<div class="mut">No videos.</div>') + '</div></div>';
@@ -396,16 +400,32 @@ var ACT = {
   back: function () { if (ui.prev === 'live' && curPass()) go('live', ui.pid); else go('home'); },
   newSession: function () {
     var last = S.sessions[S.sessions.length - 1], s = { id: C.uid(), num: last && parseInt(last.num, 10) ? String(parseInt(last.num, 10) + 1) : '', unit: last ? last.unit : '',
-      stick: last ? last.stick : '', created: Date.now(), clockReading: '', clockPhone: null, offsetMs: null, clockTz: last ? last.clockTz : '', notes: '' };
+      created: Date.now(), clockReading: '', clockPhone: null, offsetMs: null, clockTz: last ? last.clockTz : '', notes: '' };
     S.sessions.push(s); go('session', s.id);
   },
   delSession: function (id) { if (confirm('Delete this empty session?')) { S.sessions = S.sessions.filter(function (s) { return s.id !== id; }); go('home'); } },
   sync: function (id) {
-    var s = C.by(S.sessions, id), v = $('syncT').value, t = tapTime(); if (!v) { toast('Type the time the unit will show first'); return; }
-    var a = v.split(':').map(Number), reading = ((a[0] * 60 + a[1]) * 60 + (a[2] || 0)) * 1000, d = new Date(t);
+    var s = C.by(S.sessions, id), t = tapTime(), a = ['H', 'M', 'S'].map(function (x) { return parseInt($('sync' + x).value, 10); });
+    if (isNaN(a[0]) || isNaN(a[1]) || isNaN(a[2]) || a[0] > 23 || a[1] > 59 || a[2] > 59) { toast('Type the hour, minute and second the unit will show'); return; }
+    var v = a.map(function (n) { return C.pad(n, 2); }).join(':'), reading = ((a[0] * 60 + a[1]) * 60 + a[2]) * 1000, d = new Date(t);
     var off = reading - ((d.getHours() * 60 + d.getMinutes()) * 60 + d.getSeconds()) * 1000 - d.getMilliseconds();
     if (off > 43200000) off -= 86400000; if (off < -43200000) off += 86400000;
     s.clockReading = v; s.clockPhone = t; s.offsetMs = off; save(); render();
+  },
+  syncPrefill: function () {
+    var d = new Date(Math.ceil((Date.now() + 15000) / 5000) * 5000);
+    $('syncH').value = C.pad(d.getHours(), 2); $('syncM').value = C.pad(d.getMinutes(), 2); $('syncS').value = C.pad(d.getSeconds(), 2);
+  },
+  newJointForPass: function () {
+    var p = curPass(); ACT.newJoint(); var j = S.joints[S.joints.length - 1];
+    if (p) { p.jointId = j.id; p.passNo = C.nextPassNo(S, j.id, p.id); save(); }
+  },
+  splitId: function () {
+    var p = curPass(); if (!p) return;
+    var ids = C.weldIdList(p.weldIds), next = (ids.length ? Math.max.apply(null, ids) : 0) + 1;
+    if (!confirm('The unit moved to WELD ID ' + next + ' during this pass? It will be added to this pass so the recordings are joined.')) return;
+    var e = logEvent('MARK', { tag: 'unit weld ID changed', note: 'now ' + next });
+    p.weldIds = ids.concat([next]).join(','); save(); render(); if (!e) toast('Weld ID ' + next + ' added');
   },
   newJoint: function () {
     var last = S.joints[S.joints.length - 1], m = last && /^(.*?)(\d+)$/.exec(last.name || '');
@@ -462,10 +482,19 @@ var ACT = {
     dropMediaBlobs(m); S.media = S.media.filter(function (x) { return x.id !== id; }); save(); render();
   },
   shareData: function () {
-    var files = C.exportFiles(S, stamp()).map(function (f) { return new File([f.text], f.name, { type: /json$/.test(f.name) ? 'application/json' : 'text/csv' }); });
-    shareFiles(files, function () { S.lastExport = Date.now(); });
+    if (!S.visit.operator) { toast('Fill in Operator on the home screen first'); return; }
+    var enc = new TextEncoder(), st = stamp(), files = C.exportFiles(S, st).map(function (f) { return { name: f.name, bytes: enc.encode(f.text) }; });
+    shareFiles([new File(C.zip(files), C.bundleName(S, st, 'data'), { type: 'application/zip' })], function () { S.lastExport = Date.now(); });
   },
-  sharePhotos: function () { shareMedia(S.media.filter(function (m) { return m.kind === 'photo' && !m.exported && !m.gone; }).slice(0, 15)); },
+  sharePhotos: function () {
+    var list = S.media.filter(function (m) { return m.kind === 'photo' && !m.exported && !m.gone; }).slice(0, 30);
+    Promise.all(list.map(function (m) { return mediaBlob(m).then(function (b) { return b ? b.arrayBuffer() : null; }); })).then(function (bufs) {
+      var files = [], ok = [];
+      list.forEach(function (m, i) { if (bufs[i]) { ok.push(m); files.push({ name: C.mediaName(S, m), bytes: new Uint8Array(bufs[i]) }); } });
+      if (!ok.length) { toast('No photo files found on this phone'); return; }
+      shareFiles([new File(C.zip(files), C.bundleName(S, stamp(), 'photos'), { type: 'application/zip' })], function () { ok.forEach(function (m) { m.exported = true; }); });
+    }).catch(function (e) { toast('Could not load photos: ' + (e && e.message || e)); });
+  },
   shareVideo: function (id) { var m = C.by(S.media, id); if (m === recMedia) { toast('Stop the recording first'); return; } if (m) { toast('Preparing video…'); shareMedia([m]); } },
   pendingShare: function () {
     var p = ui.pending; if (!p) return; ui.pending = null;
@@ -494,7 +523,7 @@ document.addEventListener('input', function (e) {
   var a = k.split(':'), o = obj(a[0], a[1]); if (!o) return;
   o[a[2]] = e.target.value;
   if (a[0] === 'p' && a[2] === 'jointId') {
-    o.passNo = S.passes.filter(function (q) { return q.id !== o.id && q.jointId === o.jointId && q.kind === 'weld'; }).length + 1; save(); render(); return;
+    o.passNo = C.nextPassNo(S, o.jointId, o.id); save(); render(); return;
   }
   save();
 });
@@ -515,6 +544,7 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.se
 if (window.self !== window.top) warn('This page is inside a frame: storage here may be temporary. Open it directly in Safari.');
 /* Videos that were recording when the page died keep their saved pieces; give them an end time. */
 S.media.forEach(function (m) { if (m.kind === 'video' && m.t0 && !m.t1) m.t1 = m.t0; });
+if (!S.device) S.device = C.uid();
 if (S.active && S.active.passId && C.by(S.passes, S.active.passId)) { ui.view = 'live'; ui.pid = S.active.passId; }
 render();
 })();

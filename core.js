@@ -1,14 +1,14 @@
 /* HS DAQ app: pure logic (no DOM, no storage). Loaded by index.html and by test.html.
    State shape:
    { v:1, visit:{name,operator},
-     sessions:[{id,num,unit,stick,created,clockReading,clockPhone,offsetMs,clockTz,notes,ended}],
+     sessions:[{id,num,unit,created,clockReading,clockPhone,offsetMs,clockTz,notes,ended}],
      joints:[{id,name,plateIn,thickIn,leadTabIn,exitTabIn,stationA,faceA,mirrored,notes}],
      passes:[{id,sessionId,jointId,passNo,weldIds,side,direction,kind,mic,volts,amps,ipm,stickout,wire,
               intent,conditions:[],verdict,note,created}],
      events:[{id,passId,t,type,tag,note}],          t = phone epoch ms; type in EVENT_TYPES
      media:[{id,passId,jointId,inspId,kind,t0,t1,mime,size,exported}],   kind = photo | video
      insp:[{id,jointId,method,report,date,result,note,t}],
-     active:{sessionId,passId} } */
+     device (random id of this phone), active:{passId} } */
 (function (root) {
   'use strict';
   var EVENT_TYPES = ['ARC_START', 'PLATE_IN', 'PLATE_OUT', 'ARC_STOP', 'MARK'];
@@ -61,8 +61,16 @@
     var maxId = 0;
     inSession.forEach(function (q) { weldIdList(q.weldIds).forEach(function (n) { if (n > maxId) maxId = n; }); });
     p.weldIds = String(maxId + 1);
-    p.passNo = state.passes.filter(function (q) { return q.jointId && q.jointId === p.jointId && q.kind === 'weld'; }).length + 1;
+    p.passNo = nextPassNo(state, p.jointId);
     return p;
+  }
+  /* Next pass number in a joint: one more than the highest so far (also when no joint is chosen yet). */
+  function nextPassNo(state, jointId, excludeId) {
+    var mx = 0;
+    state.passes.forEach(function (q) {
+      if (q.id !== excludeId && (q.jointId || '') === (jointId || '')) { var n = parseInt(q.passNo, 10) || 0; if (n > mx) mx = n; }
+    });
+    return mx + 1;
   }
   function sessionLabel(s) { return s ? pad(parseInt(s.num, 10) || 0, 8) : ''; }
   function safe(x) { return String(x == null ? '' : x).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
@@ -100,7 +108,7 @@
     var h = Math.floor(tod / 3600000), mi = Math.floor(tod % 3600000 / 60000), se = Math.floor(tod % 60000 / 1000);
     return pad(h, 2) + ':' + pad(mi, 2) + ':' + pad(se, 2) + '.' + pad(tod % 1000, 3);
   }
-  var PASS_COLS = ['visit', 'operator', 'unit', 'usb_stick', 'session', 'session_folder', 'weld_ids', 'joint', 'pass_in_joint', 'side',
+  var PASS_COLS = ['visit', 'operator', 'phone', 'unit', 'session', 'session_folder', 'weld_ids', 'joint', 'pass_in_joint', 'side',
     'direction', 'kind', 'mic', 'volts', 'amps', 'travel_ipm', 'stickout_in', 'wire', 'intent', 'conditions', 'verdict',
     'arc_start_utc', 'plate_in_utc', 'plate_out_utc', 'arc_stop_utc', 'plate_in_s', 'plate_out_s', 'arc_dur_s', 'arc_starts',
     'unit_clock_at_arc_start', 'unit_clock_offset_s', 'marks', 'photos', 'videos', 'note', 'pass_id'];
@@ -110,10 +118,10 @@
       var marks = passEvents(state, p.id).filter(function (e) { return e.type === 'MARK'; }).map(function (e) {
         return (t.arcStart != null ? secs(t.arcStart, e.t) + 's ' : '') + (e.tag || 'mark') + (e.note ? ' (' + e.note + ')' : '');
       });
-      return { visit: state.visit.name, operator: state.visit.operator, unit: s.unit, usb_stick: s.stick, session: s.num,
+      return { visit: state.visit.name, operator: state.visit.operator, phone: state.device, unit: s.unit, session: s.num,
         session_folder: s.num !== '' && s.num != null ? 'session-' + sessionLabel(s) : '', weld_ids: weldIdList(p.weldIds).join(';'),
         joint: j.name, pass_in_joint: p.passNo, side: p.side, direction: p.direction, kind: p.kind, mic: p.mic, volts: p.volts,
-        amps: p.amps, travel_ipm: p.ipm, stickout_in: p.stickout, wire: p.wire, intent: p.intent, conditions: (p.conditions || []).join(';'),
+        amps: p.amps, travel_ipm: p.ipm, stickout_in: p.stickout, wire: p.wire, intent: p.intent, conditions: (p.conditions || []).concat(p.conditionOther ? [p.conditionOther] : []).join(';'),
         verdict: p.verdict, arc_start_utc: utc(t.arcStart), plate_in_utc: utc(t.plateIn), plate_out_utc: utc(t.plateOut),
         arc_stop_utc: utc(t.arcStop), plate_in_s: secs(t.arcStart, t.plateIn), plate_out_s: secs(t.arcStart, t.plateOut),
         arc_dur_s: secs(t.arcStart, t.arcStop), arc_starts: t.starts, unit_clock_at_arc_start: recTime(s, t.arcStart),
@@ -179,6 +187,29 @@
       { name: pre + 'backup.json', text: JSON.stringify({ app: 'hsdaq', version: 1, exported: utc(Date.now()), state: state }) }
     ];
   }
+  function bundleName(state, stamp, what) {
+    return 'hsdaq_' + (safe(state.visit.name) || 'visit') + '_' + (safe(state.visit.operator) || 'operator') + '_' + what + '_' + stamp + '.zip';
+  }
+  /* ---------- zip (stored, no compression): one file to share instead of many ---------- */
+  var CRC = (function () { var t = [], c, n, k; for (n = 0; n < 256; n++) { c = n; for (k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(b) { var c = 0xFFFFFFFF; for (var i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+  /* files: [{name, bytes: Uint8Array}] -> array of Uint8Array pieces (pass straight to new Blob / new File) */
+  function zip(files, when) {
+    var enc = new TextEncoder(), d = new Date(when || Date.now()), parts = [], central = [], off = 0, csize = 0;
+    var time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1), date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    files.forEach(function (f) {
+      var name = enc.encode(f.name), data = f.bytes, crc = crc32(data), h = new DataView(new ArrayBuffer(30)), c = new DataView(new ArrayBuffer(46));
+      h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(10, time, true); h.setUint16(12, date, true);
+      h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, data.length, true); h.setUint16(26, name.length, true);
+      c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(12, time, true); c.setUint16(14, date, true);
+      c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, data.length, true); c.setUint16(28, name.length, true); c.setUint32(42, off, true);
+      parts.push(new Uint8Array(h.buffer), name, data); central.push(new Uint8Array(c.buffer), name);
+      off += 30 + name.length + data.length; csize += 46 + name.length;
+    });
+    var e = new DataView(new ArrayBuffer(22));
+    e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, csize, true); e.setUint32(16, off, true);
+    return parts.concat(central, [new Uint8Array(e.buffer)]);
+  }
   /* Restore: add what is missing, and replace a record only when the backup's copy is the same id (backup wins on request). */
   function mergeState(state, incoming, overwrite) {
     var added = 0, replaced = 0;
@@ -198,5 +229,6 @@
   root.HSCore = { EVENT_TYPES: EVENT_TYPES, LABEL: LABEL, uid: uid, pad: pad, utc: utc, secs: secs, by: by, passEvents: passEvents,
     passTimes: passTimes, nextStep: nextStep, weldIdList: weldIdList, nextPassDefaults: nextPassDefaults, sessionLabel: sessionLabel,
     mediaName: mediaName, mediaOf: mediaOf, csv: csv, recTime: recTime, passRows: passRows, eventRows: eventRows, jointRows: jointRows,
-    inspRows: inspRows, mediaRows: mediaRows, exportFiles: exportFiles, mergeState: mergeState, blank: blank, PASS_COLS: PASS_COLS };
+    inspRows: inspRows, mediaRows: mediaRows, exportFiles: exportFiles, mergeState: mergeState, blank: blank, PASS_COLS: PASS_COLS,
+    nextPassNo: nextPassNo, bundleName: bundleName, zip: zip, crc32: crc32 };
 })(typeof window !== 'undefined' ? window : globalThis);
