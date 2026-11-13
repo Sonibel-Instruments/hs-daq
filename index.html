@@ -53,7 +53,7 @@ button.small{width:auto;padding:6px 10px;font-size:13px}
 </style>
 </head>
 <body>
-<header><b id="title">HS DAQ</b><small id="ver">v2026-11-11e</small></header>
+<header><b id="title">HS DAQ</b><small id="ver">v2026-11-12a</small></header>
 <div id="warn" hidden></div>
 <div id="space" hidden></div>
 <div id="cam" hidden><video id="pv" playsinline muted></video><span>REC</span></div>
@@ -226,6 +226,7 @@ function vLive() {
   var s = C.by(S.sessions, p.sessionId) || {}, k = 'p:' + p.id + ':', t = C.passTimes(S, p.id), step = C.nextStep(S, p.id), ev = C.passEvents(S, p.id);
   $('title').textContent = 'S' + (parseInt(s.num, 10) || '?') + ' · W' + (C.weldIdList(p.weldIds).join(',') || '?') + ' · ' + jointName(p.jointId) + ' p' + p.passNo;
   var h = '<button class="small" data-act="go" data-arg="session:' + p.sessionId + '">‹ Session</button>';
+  if (s.offsetMs == null) h += '<p class="mut" style="color:var(--warn);font-weight:600">Clock not checked for this session. Tap ‹ Session and do it when you can: any time during the session works.</p>';
   h += '<div class="card" style="margin-top:8px"><div class="row"><label>Joint<select data-k="' + k + 'jointId"><option value="">choose…</option>' + S.joints.map(function (j) {
     return '<option value="' + j.id + '"' + (j.id === p.jointId ? ' selected' : '') + '>' + esc(j.name || '(unnamed)') + '</option>';
   }).join('') + '</select></label>' + field('Pass in joint', k + 'passNo', p.passNo, 'inputmode="numeric"') +
@@ -490,6 +491,8 @@ var ACT = {
     S.insp = S.insp.filter(function (r) { return r.id !== id; }); save(); render();
   },
   newPass: function (sid) {
+    var ses = C.by(S.sessions, sid), first = !S.passes.some(function (q) { return q.sessionId === sid; });
+    if (ses && first && ses.offsetMs == null && !confirm('No clock check for this session yet. It is what lines this log up with the unit\'s recordings. OK = start the pass anyway (do the check later this session). Cancel = go back and do it now.')) return;
     var d = C.nextPassDefaults(S, sid); d.id = C.uid(); d.sessionId = sid; d.created = Date.now(); S.passes.push(d); go('live', d.id);
   },
   nextPass: function (sid) {
